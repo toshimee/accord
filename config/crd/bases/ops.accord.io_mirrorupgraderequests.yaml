@@ -1,0 +1,111 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.1
+  name: mirrorupgraderequests.ops.accord.io
+spec:
+  group: ops.accord.io
+  names:
+    kind: MirrorUpgradeRequest
+    listKind: MirrorUpgradeRequestList
+    plural: mirrorupgraderequests
+    singular: mirrorupgraderequest
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: MirrorUpgradeRequest is the Schema for the mirrorupgraderequests
+          API
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: spec defines the desired state of MirrorUpgradeRequest
+            properties:
+              approvalMode:
+                description: ApprovalMode controls whether approval is manual or automatic.
+                enum:
+                - Manual
+                - Auto
+                type: string
+              autoCollectLogs:
+                description: AutoCollectLogs indicates whether to trigger log collection
+                  after the job.
+                type: boolean
+              currentVersion:
+                description: CurrentVersion is the current version of Argo CD.
+                type: string
+              desiredVersion:
+                description: DesiredVersion is the version to upgrade to.
+                type: string
+              logArchivePath:
+                description: LogArchivePath is the storage path for archived logs.
+                type: string
+              targetCluster:
+                description: TargetCluster is the name of the target cluster.
+                type: string
+              targetNamespace:
+                description: TargetNamespace is the namespace where Argo CD is installed.
+                type: string
+            required:
+            - approvalMode
+            - currentVersion
+            - desiredVersion
+            - targetCluster
+            - targetNamespace
+            type: object
+          status:
+            description: status defines the observed state of MirrorUpgradeRequest
+            properties:
+              completedAt:
+                description: CompletedAt is when the upgrade job finished.
+                format: date-time
+                type: string
+              jobRef:
+                description: JobRef is the name of the Kubernetes Job that was dynamically
+                  spawned.
+                type: string
+              message:
+                description: Message is a human-readable message about the current
+                  phase.
+                type: string
+              phase:
+                description: Phase is the current state of the request.
+                enum:
+                - Pending
+                - Approved
+                - Running
+                - Succeeded
+                - Failed
+                - RolledBack
+                type: string
+              startedAt:
+                description: StartedAt is when the upgrade job actually started.
+                format: date-time
+                type: string
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

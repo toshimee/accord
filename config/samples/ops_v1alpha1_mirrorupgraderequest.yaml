@@ -1,0 +1,9 @@
+apiVersion: ops.accord.io/v1alpha1
+kind: MirrorUpgradeRequest
+metadata:
+  labels:
+    app.kubernetes.io/name: accord
+    app.kubernetes.io/managed-by: kustomize
+  name: mirrorupgraderequest-sample
+spec:
+  # TODO(user): Add fields here

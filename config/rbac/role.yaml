@@ -1,0 +1,32 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: manager-role
+rules:
+- apiGroups:
+  - ops.accord.io
+  resources:
+  - mirrorupgraderequests
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ops.accord.io
+  resources:
+  - mirrorupgraderequests/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - ops.accord.io
+  resources:
+  - mirrorupgraderequests/status
+  verbs:
+  - get
+  - patch
+  - update
