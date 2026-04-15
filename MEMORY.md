@@ -17,6 +17,7 @@
 - [x] Run `make manifests` to generate CRD YAML (`config/crd/bases/ops.accord.io_mirrorupgraderequests.yaml`).
 - [x] Split binaries: `cmd/inventory-controller`, `cmd/sync-operator`, `cmd/mirror-upgrader` (default deploy image entrypoint: mirror-upgrader).
 - [x] ConfigMap material canonical JSON + SHA-256 in `internal/configmapmaterial` with table-driven tests; reconcile in `internal/inventory`; webhook in `internal/syncoperator`.
+- [x] `internal/inventory/normalize.go` + `normalize_test.go`: YAML manifests strip `status`, volatile `metadata`, and `kubectl.kubernetes.io/last-applied-configuration`, then SHA-256 of canonical JSON (`MaterialHashFromNormalizedYAML`); tests assert noisy vs minimal YAML produce identical hashes.
 
 ## 🐛 Known Issues / Blockers
 - None. Cross-component loop break uses `accord.io/sync-content-hash` (written by sync-operator) plus in-process cache in inventory-controller; Git export / Argo `Application` watches are not implemented yet.
