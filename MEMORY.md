@@ -4,7 +4,7 @@
 
 ## 📌 Current Status
 - **Active Phase:** Phase 1 (Inventory Controller & Sync Operator setup)
-- **Current Focus:** Iterating in a single `cmd/main.go` manager that runs both inventory-style reconcile (labeled `ConfigMap` watch + hash cache) and a sync webhook (`POST /accord/v1/sync/push`) sharing the same in-memory cache for loop breaking.
+- **Current Focus:** Hardening per `.cursorrules`: separate binaries under `cmd/inventory-controller`, `cmd/sync-operator`, and `cmd/mirror-upgrader`; material hash + annotation contract in `internal/configmapmaterial`.
 
 ## 🏗️ Core Context (Do Not Forget)
 - **Architecture:** 5 separate micro-components (Inventory, Sync, Watcher, Upgrader, Collector).
@@ -15,12 +15,12 @@
 - [x] Initialize Kubebuilder project with `ops.accord.io/v1alpha1`.
 - [x] Define `MirrorUpgradeRequest` struct in `api/v1alpha1/`.
 - [x] Run `make manifests` to generate CRD YAML (`config/crd/bases/ops.accord.io_mirrorupgraderequests.yaml`).
-- [ ] (Optional later) Split binaries into `cmd/inventory-controller` and `cmd/sync-operator` for production isolation.
-- [x] Prototype inventory + sync in `cmd/main.go` with canonical JSON + SHA-256 hash cache (labeled `ConfigMap` MVP; not yet `internal/inventory/`).
+- [x] Split binaries: `cmd/inventory-controller`, `cmd/sync-operator`, `cmd/mirror-upgrader` (default deploy image entrypoint: mirror-upgrader).
+- [x] ConfigMap material canonical JSON + SHA-256 in `internal/configmapmaterial` with table-driven tests; reconcile in `internal/inventory`; webhook in `internal/syncoperator`.
 
 ## 🐛 Known Issues / Blockers
-- None. Hash cache is process-local only (lost on restart); Git export / Argo `Application` watches are not implemented yet.
+- None. Cross-component loop break uses `accord.io/sync-content-hash` (written by sync-operator) plus in-process cache in inventory-controller; Git export / Argo `Application` watches are not implemented yet.
 
 ## 📓 Recent Architectural Decisions (ADR Summary)
 - [2026-04-15] Decided to use a Webhook-based `sync-operator` for Git -> Cluster deployments to avoid Argo CD Self-Heal race conditions, relying on Hash validation for idempotency.
-- [2026-04-15] Temporarily colocated `inventory-controller` reconcile logic and `sync-operator` HTTP webhook in `cmd/main.go` to increase iteration speed before splitting binaries again.
+- [2026-04-15] Reverted the experimental single-`main.go` merge: components must stay in separate `cmd/<component>/` entrypoints per `.cursorrules`; cross-pod idempotency uses `accord.io/sync-content-hash` instead of a shared in-memory cache between binaries.

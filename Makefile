@@ -105,12 +105,22 @@ lint-config: golangci-lint ## Verify golangci-lint linter configuration
 ##@ Build
 
 .PHONY: build
-build: manifests generate fmt vet ## Build manager binary.
-	go build -o bin/manager cmd/main.go
+build: manifests generate fmt vet ## Build component binaries (strict cmd/<component> layout).
+	go build -o bin/inventory-controller ./cmd/inventory-controller
+	go build -o bin/sync-operator ./cmd/sync-operator
+	go build -o bin/mirror-upgrader ./cmd/mirror-upgrader
 
 .PHONY: run
-run: manifests generate fmt vet ## Run a controller from your host.
-	go run ./cmd/main.go
+run: manifests generate fmt vet ## Run mirror-upgrader from your host (Kubebuilder CR controller).
+	go run ./cmd/mirror-upgrader
+
+.PHONY: run-inventory
+run-inventory: manifests generate fmt vet ## Run inventory-controller locally.
+	go run ./cmd/inventory-controller
+
+.PHONY: run-sync
+run-sync: manifests generate fmt vet ## Run sync-operator locally.
+	go run ./cmd/sync-operator
 
 # If you wish to build the manager image targeting other platforms you can use the --platform flag.
 # (i.e. docker build --platform linux/arm64). However, you must enable docker buildKit for it.
