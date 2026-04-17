@@ -11,9 +11,16 @@ rules:
   verbs:
   - create
   - get
-  - list
   - patch
   - update
+- apiGroups:
+  - argoproj.io
+  resources:
+  - applications
+  - applicationsets
+  verbs:
+  - get
+  - list
   - watch
 - apiGroups:
   - ops.accord.io

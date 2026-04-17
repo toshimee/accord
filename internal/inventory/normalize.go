@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"strings"
 
+	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/yaml"
 )
 
@@ -91,4 +92,37 @@ func normalizeKubernetesObject(obj map[string]interface{}) {
 	if len(meta) == 0 {
 		delete(obj, "metadata")
 	}
+}
+
+func normalizedMapFromRuntimeObject(obj runtime.Object) (map[string]interface{}, error) {
+	b, err := json.Marshal(obj)
+	if err != nil {
+		return nil, fmt.Errorf("marshal runtime object: %w", err)
+	}
+	var m map[string]interface{}
+	if err := json.Unmarshal(b, &m); err != nil {
+		return nil, fmt.Errorf("unmarshal object JSON: %w", err)
+	}
+	normalizeKubernetesObject(m)
+	return m, nil
+}
+
+// NormalizedYAMLAndMaterialHash returns normalized export YAML and the SHA-256 hex digest of the
+// normalized canonical JSON (same normalization rules as MaterialHashFromNormalizedYAML).
+func NormalizedYAMLAndMaterialHash(obj runtime.Object) ([]byte, string, error) {
+	m, err := normalizedMapFromRuntimeObject(obj)
+	if err != nil {
+		return nil, "", err
+	}
+	j, err := json.Marshal(m)
+	if err != nil {
+		return nil, "", fmt.Errorf("marshal normalized map: %w", err)
+	}
+	sum := sha256.Sum256(j)
+	h := hex.EncodeToString(sum[:])
+	yb, err := yaml.JSONToYAML(j)
+	if err != nil {
+		return nil, "", fmt.Errorf("json to yaml: %w", err)
+	}
+	return yb, h, nil
 }

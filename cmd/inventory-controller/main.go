@@ -20,8 +20,6 @@ import (
 	"flag"
 	"os"
 
-	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
-	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -29,13 +27,21 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	"accord/internal/bootstrap"
+	"accord/internal/config"
+	"accord/internal/git"
 	"accord/internal/inventory"
 )
 
 var setupLog = ctrl.Log.WithName("setup")
 
 func main() {
-	scheme := bootstrap.NewScheme()
+	cfg, err := config.LoadInventoryControllerConfig()
+	if err != nil {
+		setupLog.Error(err, "Failed to load inventory controller configuration")
+		os.Exit(1)
+	}
+
+	scheme := bootstrap.NewInventoryScheme()
 
 	var metricsAddr, probeAddr string
 	var metricsCertPath, metricsCertName, metricsCertKey string
@@ -85,11 +91,26 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := (&inventory.Reconciler{
-		Client: mgr.GetClient(),
-		Cache:  inventory.NewHashCache(),
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "Failed to create controller", "controller", "accord-inventory")
+	cache := inventory.NewHashCache()
+	worker := git.NewBatchWorker(cfg, ctrl.Log)
+	if err := mgr.Add(worker); err != nil {
+		setupLog.Error(err, "Failed to add Git batch worker")
+		os.Exit(1)
+	}
+
+	deps := &inventory.ReconcileDeps{
+		Client:         mgr.GetClient(),
+		Cache:          cache,
+		GitQueue:       worker,
+		ExportPathTmpl: cfg.ExportPathTemplate,
+	}
+
+	if err := (&inventory.ApplicationReconciler{ReconcileDeps: deps}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Failed to create controller", "controller", "Application")
+		os.Exit(1)
+	}
+	if err := (&inventory.ApplicationSetReconciler{ReconcileDeps: deps}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Failed to create controller", "controller", "ApplicationSet")
 		os.Exit(1)
 	}
 

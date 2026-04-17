@@ -20,73 +20,116 @@ import (
 	"context"
 	"fmt"
 
-	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
-	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	"accord/internal/configmapmaterial"
+	"accord/internal/git"
 )
 
-// Reconciler implements inventory-controller export triggers for labeled ConfigMaps.
-type Reconciler struct {
-	client.Client
-	Cache *HashCache
+// ReconcileDeps is shared state for Argo inventory reconcilers (DI from main).
+type ReconcileDeps struct {
+	Client         client.Client
+	Cache          *HashCache
+	GitQueue       *git.BatchWorker
+	ExportPathTmpl string
 }
 
-// +kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;list;watch
-
-func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+func (d *ReconcileDeps) handle(ctx context.Context, req ctrl.Request, obj client.Object, kind string) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
-	var cm corev1.ConfigMap
-	if err := r.Get(ctx, req.NamespacedName, &cm); err != nil {
-		if apierrors.IsNotFound(err) {
-			r.Cache.Delete(objectKey(req.Namespace, req.Name))
+	yamlBytes, currentHash, err := NormalizedYAMLAndMaterialHash(obj)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("normalize and hash object: %w", err)
+	}
+
+	cacheKey := ExportObjectCacheKey(kind, req.Namespace, req.Name)
+
+	if ann := obj.GetAnnotations(); ann != nil {
+		if v, ok := ann[configmapmaterial.SyncContentHashAnnotationKey]; ok && v == currentHash {
+			log.Info("Hash matched (annotation). Ignoring event to break loop",
+				"kind", kind, "namespace", req.Namespace, "name", req.Name, "hash", currentHash)
 			return ctrl.Result{}, nil
 		}
-		return ctrl.Result{}, fmt.Errorf("failed to get ConfigMap: %w", err)
 	}
 
-	if cm.Labels == nil || cm.Labels[configmapmaterial.InventoryLabelKey] != configmapmaterial.InventoryLabelValue {
+	if prev, ok := d.Cache.Get(cacheKey); ok && prev == currentHash {
+		log.Info("Hash matched (cache). Ignoring event to break loop",
+			"kind", kind, "namespace", req.Namespace, "name", req.Name, "hash", currentHash)
 		return ctrl.Result{}, nil
 	}
 
-	h, err := configmapmaterial.MaterialSHA256Hex(&cm)
+	d.Cache.Set(cacheKey, currentHash)
+
+	relPath, err := RenderExportPath(d.ExportPathTmpl, kind, req.Namespace, req.Name)
 	if err != nil {
-		return ctrl.Result{}, fmt.Errorf("failed to compute material hash: %w", err)
+		return ctrl.Result{}, fmt.Errorf("render export path: %w", err)
 	}
 
-	key := objectKey(req.Namespace, req.Name)
-
-	if ann, ok := cm.Annotations[configmapmaterial.SyncContentHashAnnotationKey]; ok && ann == h {
-		log.V(1).Info("Ignored inventory reconcile; material hash matches sync annotation",
-			"namespace", req.Namespace, "name", req.Name)
-		return ctrl.Result{}, nil
-	}
-
-	if prev, ok := r.Cache.Get(key); ok && prev == h {
-		log.V(1).Info("Ignored inventory reconcile due to matching in-process hash cache",
-			"namespace", req.Namespace, "name", req.Name)
-		return ctrl.Result{}, nil
-	}
-
-	r.Cache.Set(key, h)
-	log.Info("Recorded inventory hash for ConfigMap",
-		"namespace", req.Namespace, "name", req.Name, "hash", h)
+	d.GitQueue.Enqueue(git.ExportJob{Path: relPath, Content: yamlBytes})
+	log.Info("Enqueued inventory export", "kind", kind, "namespace", req.Namespace, "name", req.Name, "path", relPath)
 	return ctrl.Result{}, nil
 }
 
-// SetupWithManager registers the inventory controller.
-func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
+// ApplicationReconciler watches Argo CD Applications (argoproj.io/v1alpha1).
+type ApplicationReconciler struct {
+	*ReconcileDeps
+}
+
+// +kubebuilder:rbac:groups=argoproj.io,resources=applications,verbs=get;list;watch
+
+func (r *ApplicationReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	u := &unstructured.Unstructured{}
+	u.SetGroupVersionKind(ApplicationGVK)
+	if err := r.Client.Get(ctx, req.NamespacedName, u); err != nil {
+		if apierrors.IsNotFound(err) {
+			r.Cache.Delete(ExportObjectCacheKey("Application", req.Namespace, req.Name))
+			return ctrl.Result{}, nil
+		}
+		return ctrl.Result{}, fmt.Errorf("failed to get Application: %w", err)
+	}
+	return r.handle(ctx, req, u, "Application")
+}
+
+// SetupWithManager registers the Application controller.
+func (r *ApplicationReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	proto := &unstructured.Unstructured{}
+	proto.SetGroupVersionKind(ApplicationGVK)
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&corev1.ConfigMap{}).
-		WithEventFilter(predicate.NewPredicateFuncs(func(obj client.Object) bool {
-			lbl := obj.GetLabels()
-			return lbl != nil && lbl[configmapmaterial.InventoryLabelKey] == configmapmaterial.InventoryLabelValue
-		})).
-		Named("accord-inventory").
+		For(proto).
+		Named("accord-inventory-application").
+		Complete(r)
+}
+
+// ApplicationSetReconciler watches Argo CD ApplicationSets (argoproj.io/v1alpha1).
+type ApplicationSetReconciler struct {
+	*ReconcileDeps
+}
+
+// +kubebuilder:rbac:groups=argoproj.io,resources=applicationsets,verbs=get;list;watch
+
+func (r *ApplicationSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	u := &unstructured.Unstructured{}
+	u.SetGroupVersionKind(ApplicationSetGVK)
+	if err := r.Client.Get(ctx, req.NamespacedName, u); err != nil {
+		if apierrors.IsNotFound(err) {
+			r.Cache.Delete(ExportObjectCacheKey("ApplicationSet", req.Namespace, req.Name))
+			return ctrl.Result{}, nil
+		}
+		return ctrl.Result{}, fmt.Errorf("failed to get ApplicationSet: %w", err)
+	}
+	return r.handle(ctx, req, u, "ApplicationSet")
+}
+
+// SetupWithManager registers the ApplicationSet controller.
+func (r *ApplicationSetReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	proto := &unstructured.Unstructured{}
+	proto.SetGroupVersionKind(ApplicationSetGVK)
+	return ctrl.NewControllerManagedBy(mgr).
+		For(proto).
+		Named("accord-inventory-applicationset").
 		Complete(r)
 }

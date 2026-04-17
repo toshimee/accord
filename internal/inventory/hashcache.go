@@ -51,6 +51,7 @@ func (c *HashCache) Delete(key string) {
 	delete(c.m, key)
 }
 
-func objectKey(namespace, name string) string {
-	return namespace + "/" + name
+// ExportObjectCacheKey builds the in-memory cache key for an Argo inventory object.
+func ExportObjectCacheKey(kind, namespace, name string) string {
+	return ArgoPluralKind(kind) + "/" + namespace + "/" + name
 }
