@@ -157,6 +157,40 @@ data:
 	}
 }
 
+func TestMaterialHashFromNormalizedYAML_syncContentHashAnnotationIgnored(t *testing.T) {
+	base := `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: x
+  namespace: n
+data:
+  k: v
+`
+	withHash := `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: x
+  namespace: n
+  annotations:
+    accord.io/sync-content-hash: deadbeef0000
+data:
+  k: v
+`
+	h1, err := MaterialHashFromNormalizedYAML([]byte(base))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h2, err := MaterialHashFromNormalizedYAML([]byte(withHash))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h1 != h2 {
+		t.Fatalf("material hash must ignore sync stamp: %s vs %s", h1, h2)
+	}
+}
+
 func TestMaterialHashFromNormalizedYAML_firstDocumentOnly(t *testing.T) {
 	multi := `
 apiVersion: v1

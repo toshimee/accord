@@ -5,22 +5,15 @@ metadata:
   name: manager-role
 rules:
 - apiGroups:
-  - ""
-  resources:
-  - configmaps
-  verbs:
-  - create
-  - get
-  - patch
-  - update
-- apiGroups:
   - argoproj.io
   resources:
   - applications
   - applicationsets
   verbs:
+  - create
   - get
   - list
+  - patch
   - watch
 - apiGroups:
   - ops.accord.io

@@ -3,8 +3,8 @@
 > **Agent Instruction:** Read this file first. Remove items from "Active Tasks" as you complete them, and log your work in `WORKLOG.md`.
 
 ## 📌 Current Status
-- **Active Phase:** Phase 1 (Inventory Controller & Sync Operator setup)
-- **Current Focus:** Hardening sync-operator and Git → cluster paths; optional split of ClusterRole per component.
+- **Active Phase:** Phase 1 / 1.5 (Inventory + Sync)
+- **Current Focus:** Operational hardening (webhook auth, GitLab payloads, SSA conflict policy); optional ClusterRole split per component.
 
 ## 🏗️ Core Context (Do Not Forget)
 - **Architecture:** 5 separate micro-components (Inventory, Sync, Watcher, Upgrader, Collector).
@@ -16,7 +16,8 @@
 - [x] Define `MirrorUpgradeRequest` struct in `api/v1alpha1/`.
 - [x] Run `make manifests` to generate CRD YAML (`config/crd/bases/ops.accord.io_mirrorupgraderequests.yaml`).
 - [x] Split binaries: `cmd/inventory-controller`, `cmd/sync-operator`, `cmd/mirror-upgrader` (default deploy image entrypoint: mirror-upgrader).
-- [x] ConfigMap material canonical JSON + SHA-256 in `internal/configmapmaterial` with table-driven tests; webhook in `internal/syncoperator`.
+- [x] ConfigMap material canonical JSON + SHA-256 in `internal/configmapmaterial` with table-driven tests (legacy ConfigMap path removed from sync-operator).
+- [x] Phase 1.5 sync-operator: `internal/sync` GitHub push webhook `POST /api/v1/webhook`, path filter `inventory/applications|applicationsets/...`, raw.githubusercontent.com fetch, `MaterialHashFromNormalizedYAML` + inject `accord.io/sync-content-hash` then SSA (`accord-sync-operator` field manager). No shared inventory cache.
 - [x] `internal/inventory/normalize.go` + `normalize_test.go`: YAML manifests strip `status`, volatile `metadata`, and `kubectl.kubernetes.io/last-applied-configuration`, then SHA-256 of canonical JSON (`MaterialHashFromNormalizedYAML`); tests assert noisy vs minimal YAML produce identical hashes.
 - [x] Phase 1 inventory: `internal/config` (12-factor env), Argo `Application` / `ApplicationSet` watches via `unstructured` + `internal/git` batch worker (`chore(inventory): sync N resources [skip ci]`), export path `inventory/<plural>/...`, loop break via annotation + cache.
 

@@ -18,7 +18,9 @@ package main
 
 import (
 	"flag"
+	"net/http"
 	"os"
+	"time"
 
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
@@ -27,13 +29,20 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	"accord/internal/bootstrap"
-	"accord/internal/syncoperator"
+	"accord/internal/config"
+	"accord/internal/sync"
 )
 
 var setupLog = ctrl.Log.WithName("setup")
 
 func main() {
-	scheme := bootstrap.NewScheme()
+	cfg, err := config.LoadInventoryControllerConfig()
+	if err != nil {
+		setupLog.Error(err, "Failed to load configuration (shared env schema for Git token)")
+		os.Exit(1)
+	}
+
+	scheme := bootstrap.NewInventoryScheme()
 
 	var metricsAddr, probeAddr string
 	var metricsCertPath, metricsCertName, metricsCertKey string
@@ -83,10 +92,14 @@ func main() {
 		os.Exit(1)
 	}
 
-	mgr.GetWebhookServer().Register(syncoperator.WebhookPath, &syncoperator.PushHandler{
-		Client: mgr.GetClient(),
-	})
-	setupLog.Info("Registered sync-operator webhook", "path", syncoperator.WebhookPath)
+	httpClient := &http.Client{Timeout: 2 * time.Minute}
+	h := &sync.WebhookHandler{
+		K8s:         mgr.GetClient(),
+		HTTPClient:  httpClient,
+		GitHubToken: cfg.GitAccessToken,
+	}
+	mgr.GetWebhookServer().Register(sync.WebhookPath, h)
+	setupLog.Info("Registered sync-operator webhook", "path", sync.WebhookPath)
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
 		setupLog.Error(err, "Failed to set up health check")

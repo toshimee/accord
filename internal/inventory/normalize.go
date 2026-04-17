@@ -25,6 +25,8 @@ import (
 
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/yaml"
+
+	"accord/internal/configmapmaterial"
 )
 
 // metadata keys removed before hashing (volatile / system-populated).
@@ -73,6 +75,11 @@ func firstYAMLDocument(src []byte) []byte {
 	return []byte(first)
 }
 
+// FirstYAMLDocument returns the first YAML document in src (split on line "---" separators).
+func FirstYAMLDocument(src []byte) []byte {
+	return firstYAMLDocument(src)
+}
+
 func normalizeKubernetesObject(obj map[string]interface{}) {
 	delete(obj, "status")
 
@@ -85,6 +92,7 @@ func normalizeKubernetesObject(obj map[string]interface{}) {
 	}
 	if ann, ok := meta["annotations"].(map[string]interface{}); ok {
 		delete(ann, lastAppliedAnnotation)
+		delete(ann, configmapmaterial.SyncContentHashAnnotationKey)
 		if len(ann) == 0 {
 			delete(meta, "annotations")
 		}
