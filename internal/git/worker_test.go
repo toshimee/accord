@@ -33,10 +33,25 @@ func TestBatchWorker_Enqueue_lastWriteWinsPerPath(t *testing.T) {
 	w.Enqueue(ExportJob{Path: "inventory/applications/ns/a.yaml", Content: []byte("a")})
 	w.Enqueue(ExportJob{Path: "inventory/applications/ns/a.yaml", Content: []byte("b")})
 	w.mu.Lock()
-	got := string(w.pending["inventory/applications/ns/a.yaml"])
+	got := string(w.pending["inventory/applications/ns/a.yaml"].content)
 	w.mu.Unlock()
 	if got != "b" {
 		t.Fatalf("expected last enqueue to win, got %q", got)
+	}
+}
+
+func TestBatchWorker_EnqueueArchive_lastWins(t *testing.T) {
+	w := NewBatchWorker(config.InventoryControllerConfig{
+		GitRepoURL:    "",
+		BatchInterval: time.Hour,
+	}, logr.Discard())
+	w.Enqueue(ExportJob{Path: "inventory/applications/ns/a.yaml", Content: []byte("b")})
+	w.EnqueueArchive("inventory/applications/ns/a.yaml")
+	w.mu.Lock()
+	op := w.pending["inventory/applications/ns/a.yaml"]
+	w.mu.Unlock()
+	if op.kind != opArchive {
+		t.Fatalf("expected archive to win, got kind %v", op.kind)
 	}
 }
 
@@ -46,4 +61,32 @@ func TestCommitSubject_format(t *testing.T) {
 	if s != want {
 		t.Fatalf("got %q want %q", s, want)
 	}
+}
+
+func TestCommitMessageForBatch_archiveOnly(t *testing.T) {
+	batch := map[string]pendingExport{
+		"inventory/applications/ns/my-app.yaml": {kind: opArchive},
+	}
+	paths := sortedKeysBatch(batch)
+	sub, body := commitMessageForBatch(batch, paths)
+	want := "feat(archive): move deleted resource my-app to archive [skip ci]"
+	if sub != want {
+		t.Fatalf("subject: got %q want %q", sub, want)
+	}
+	if body != "inventory/applications/ns/my-app.yaml" {
+		t.Fatalf("body: got %q", body)
+	}
+}
+
+func TestCommitMessageForBatch_mixed(t *testing.T) {
+	batch := map[string]pendingExport{
+		"inventory/applications/ns/b.yaml": {kind: opWrite, content: []byte("x")},
+		"inventory/applications/ns/a.yaml": {kind: opArchive},
+	}
+	paths := sortedKeysBatch(batch)
+	sub, _ := commitMessageForBatch(batch, paths)
+	if want := "chore(inventory): sync 1 and archive 1 resources [skip ci]"; sub != want {
+		t.Fatalf("got %q want %q", sub, want)
+	}
+	_ = paths
 }

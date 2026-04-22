@@ -32,7 +32,7 @@ const (
 	envGitAccessToken       = "GIT_ACCESS_TOKEN"
 
 	defaultGitBranch          = "main"
-	defaultBatchIntervalSec   = 30
+	defaultBatchIntervalSec   = 10
 	defaultExportPathTemplate = "inventory/{{.PluralKind}}/{{.Namespace}}/{{.Name}}.yaml"
 )
 

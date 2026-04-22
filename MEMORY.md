@@ -5,6 +5,7 @@
 ## 📌 Current Status
 - **Active Phase:** Phase 1 / 1.5 (Inventory + Sync)
 - **Current Focus:** Operational hardening (webhook auth, GitLab payloads, SSA conflict policy); optional ClusterRole split per component.
+- **Phase 1 archive (§7.4):** On `apierrors.IsNotFound`, inventory-controller enqueues `git.BatchWorker.EnqueueArchive` (same debounced map as exports). The batch worker **renames** `inventory/.../name.yaml` → `inventory/archive/.../name.yaml` in the clone (soft-delete; no hard remove). Default `BATCH_INTERVAL_SECONDS` is **10s** when unset.
 
 ## 🏗️ Core Context (Do Not Forget)
 - **Architecture:** 5 separate micro-components (Inventory, Sync, Watcher, Upgrader, Collector).
@@ -20,6 +21,7 @@
 - [x] Phase 1.5 sync-operator: `internal/sync` GitHub push webhook `POST /api/v1/webhook`, path filter `inventory/applications|applicationsets/...`, raw.githubusercontent.com fetch, `MaterialHashFromNormalizedYAML` + inject `accord.io/sync-content-hash` then SSA (`accord-sync-operator` field manager). No shared inventory cache.
 - [x] `internal/inventory/normalize.go` + `normalize_test.go`: YAML manifests strip `status`, volatile `metadata`, and `kubectl.kubernetes.io/last-applied-configuration`, then SHA-256 of canonical JSON (`MaterialHashFromNormalizedYAML`); tests assert noisy vs minimal YAML produce identical hashes.
 - [x] Phase 1 inventory: `internal/config` (12-factor env), Argo `Application` / `ApplicationSet` watches via `unstructured` + `internal/git` batch worker (`chore(inventory): sync N resources [skip ci]`), export path `inventory/<plural>/...`, loop break via annotation + cache.
+- [x] Phase 1 — resource delete → Git **archive** (prompt 0006): `IsNotFound` → `EnqueueArchive`; `internal/git` moves live YAML under `inventory/archive/...` with `feat(archive): move deleted resource <name> to archive [skip ci]` when the batch is archive-only (single resource).
 
 ## 🐛 Known Issues / Blockers
 - Git batch worker uses a **fresh shallow clone per flush**; `docs/git-policy.md` “pull --rebase before push” is not yet implemented in-process (go-git `PullOptions` has no rebase flag in the pinned version). Non-fast-forward pushes fail and paths are re-queued.

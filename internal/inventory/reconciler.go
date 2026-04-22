@@ -82,11 +82,18 @@ type ApplicationReconciler struct {
 // +kubebuilder:rbac:groups=argoproj.io,resources=applications,verbs=get;list;watch
 
 func (r *ApplicationReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	log := logf.FromContext(ctx)
 	u := &unstructured.Unstructured{}
 	u.SetGroupVersionKind(ApplicationGVK)
 	if err := r.Client.Get(ctx, req.NamespacedName, u); err != nil {
 		if apierrors.IsNotFound(err) {
 			r.Cache.Delete(ExportObjectCacheKey("Application", req.Namespace, req.Name))
+			relPath, pathErr := RenderExportPath(r.ExportPathTmpl, "Application", req.Namespace, req.Name)
+			if pathErr != nil {
+				return ctrl.Result{}, fmt.Errorf("render export path for delete: %w", pathErr)
+			}
+			r.GitQueue.EnqueueArchive(relPath)
+			log.Info("Enqueued inventory archive (resource deleted in cluster)", "path", relPath, "namespace", req.Namespace, "name", req.Name)
 			return ctrl.Result{}, nil
 		}
 		return ctrl.Result{}, fmt.Errorf("failed to get Application: %w", err)
@@ -112,11 +119,18 @@ type ApplicationSetReconciler struct {
 // +kubebuilder:rbac:groups=argoproj.io,resources=applicationsets,verbs=get;list;watch
 
 func (r *ApplicationSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	log := logf.FromContext(ctx)
 	u := &unstructured.Unstructured{}
 	u.SetGroupVersionKind(ApplicationSetGVK)
 	if err := r.Client.Get(ctx, req.NamespacedName, u); err != nil {
 		if apierrors.IsNotFound(err) {
 			r.Cache.Delete(ExportObjectCacheKey("ApplicationSet", req.Namespace, req.Name))
+			relPath, pathErr := RenderExportPath(r.ExportPathTmpl, "ApplicationSet", req.Namespace, req.Name)
+			if pathErr != nil {
+				return ctrl.Result{}, fmt.Errorf("render export path for delete: %w", pathErr)
+			}
+			r.GitQueue.EnqueueArchive(relPath)
+			log.Info("Enqueued inventory archive (resource deleted in cluster)", "path", relPath, "namespace", req.Namespace, "name", req.Name)
 			return ctrl.Result{}, nil
 		}
 		return ctrl.Result{}, fmt.Errorf("failed to get ApplicationSet: %w", err)

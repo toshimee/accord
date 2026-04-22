@@ -41,13 +41,25 @@ type ExportJob struct {
 	Content []byte
 }
 
+type exportOpKind int
+
+const (
+	opWrite exportOpKind = iota
+	opArchive
+)
+
+type pendingExport struct {
+	kind    exportOpKind
+	content []byte
+}
+
 // BatchWorker debounces export paths and periodically commits and pushes to Git.
 type BatchWorker struct {
 	cfg config.InventoryControllerConfig
 	log logr.Logger
 
 	mu      sync.Mutex
-	pending map[string][]byte
+	pending map[string]pendingExport
 }
 
 // NewBatchWorker constructs a worker. Call mgr.Add(worker) so it runs under the manager lifecycle.
@@ -55,7 +67,7 @@ func NewBatchWorker(cfg config.InventoryControllerConfig, log logr.Logger) *Batc
 	return &BatchWorker{
 		cfg:     cfg,
 		log:     log.WithName("git-batch-worker"),
-		pending: make(map[string][]byte),
+		pending: make(map[string]pendingExport),
 	}
 }
 
@@ -63,7 +75,15 @@ func NewBatchWorker(cfg config.InventoryControllerConfig, log logr.Logger) *Batc
 func (w *BatchWorker) Enqueue(job ExportJob) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	w.pending[job.Path] = append([]byte(nil), job.Content...)
+	w.pending[job.Path] = pendingExport{kind: opWrite, content: append([]byte(nil), job.Content...)}
+}
+
+// EnqueueArchive records a soft-delete: the live inventory file is moved to inventory/archive/
+// with the same relative path on the next batch flush (debounce: last op wins per path).
+func (w *BatchWorker) EnqueueArchive(relPath string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.pending[relPath] = pendingExport{kind: opArchive}
 }
 
 // NeedLeaderElection ensures only the elected inventory-controller replica pushes to Git.
@@ -92,7 +112,7 @@ func (w *BatchWorker) flush(ctx context.Context) {
 		return
 	}
 	batch := w.pending
-	w.pending = make(map[string][]byte)
+	w.pending = make(map[string]pendingExport)
 	w.mu.Unlock()
 
 	if strings.TrimSpace(w.cfg.GitRepoURL) == "" {
@@ -125,7 +145,7 @@ func (w *BatchWorker) auth() *http.BasicAuth {
 	}
 }
 
-func (w *BatchWorker) exportBatch(ctx context.Context, batch map[string][]byte) error {
+func (w *BatchWorker) exportBatch(ctx context.Context, batch map[string]pendingExport) error {
 	dir, err := os.MkdirTemp("", "accord-inventory-git-")
 	if err != nil {
 		return fmt.Errorf("create temp dir: %w", err)
@@ -148,13 +168,22 @@ func (w *BatchWorker) exportBatch(ctx context.Context, batch map[string][]byte) 
 		return fmt.Errorf("git clone: %w", err)
 	}
 
-	for rel, content := range batch {
-		full := filepath.Join(dir, filepath.FromSlash(rel))
-		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
-			return fmt.Errorf("mkdir for %q: %w", rel, err)
-		}
-		if err := os.WriteFile(full, content, 0o644); err != nil {
-			return fmt.Errorf("write export file %q: %w", rel, err)
+	for rel, op := range batch {
+		switch op.kind {
+		case opWrite:
+			full := filepath.Join(dir, filepath.FromSlash(rel))
+			if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+				return fmt.Errorf("mkdir for %q: %w", rel, err)
+			}
+			if err := os.WriteFile(full, op.content, 0o644); err != nil {
+				return fmt.Errorf("write export file %q: %w", rel, err)
+			}
+		case opArchive:
+			if err := archiveInventoryFileInClone(dir, rel); err != nil {
+				return fmt.Errorf("archive export file %q: %w", rel, err)
+			}
+		default:
+			return fmt.Errorf("unknown export op for %q", rel)
 		}
 	}
 
@@ -179,9 +208,8 @@ func (w *BatchWorker) exportBatch(ctx context.Context, batch map[string][]byte) 
 		return nil
 	}
 
-	paths := sortedKeys(batch)
-	subject := commitSubject(len(paths))
-	body := commitBody(paths)
+	paths := sortedKeysBatch(batch)
+	subject, body := commitMessageForBatch(batch, paths)
 	fullMsg := subject
 	if body != "" {
 		fullMsg = subject + "\n\n" + body
@@ -222,11 +250,73 @@ func commitBody(paths []string) string {
 	return strings.TrimSuffix(b.String(), "\n")
 }
 
-func sortedKeys(m map[string][]byte) []string {
+func sortedKeysBatch(m map[string]pendingExport) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {
 		out = append(out, k)
 	}
 	sort.Strings(out)
 	return out
+}
+
+func commitMessageForBatch(batch map[string]pendingExport, sortedPaths []string) (subject, body string) {
+	var writes, archives []string
+	for _, p := range sortedPaths {
+		switch batch[p].kind {
+		case opWrite:
+			writes = append(writes, p)
+		case opArchive:
+			archives = append(archives, p)
+		}
+	}
+	switch {
+	case len(writes) > 0 && len(archives) == 0:
+		return commitSubject(len(writes)), commitBody(writes)
+	case len(writes) == 0 && len(archives) > 0:
+		if len(archives) == 1 {
+			name := resourceNameFromInventoryPath(archives[0])
+			return fmt.Sprintf("feat(archive): move deleted resource %s to archive [skip ci]", name), commitBody(archives)
+		}
+		return fmt.Sprintf("feat(archive): move deleted resource %d resources to archive [skip ci]", len(archives)), commitBody(archives)
+	default:
+		subj := fmt.Sprintf("chore(inventory): sync %d and archive %d resources [skip ci]", len(writes), len(archives))
+		b1 := commitBody(writes)
+		b2 := commitBody(archives)
+		switch {
+		case b1 == "":
+			return subj, "archive:\n" + b2
+		case b2 == "":
+			return subj, "write:\n" + b1
+		default:
+			return subj, "write:\n" + b1 + "\narchive:\n" + b2
+		}
+	}
+}
+
+func archiveInventoryFileInClone(repoRoot, inventoryRel string) error {
+	destRel, err := ArchiveRelativePath(inventoryRel)
+	if err != nil {
+		return err
+	}
+	src := filepath.Join(repoRoot, filepath.FromSlash(inventoryRel))
+	dest := filepath.Join(repoRoot, filepath.FromSlash(destRel))
+	st, err := os.Stat(src)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// No live file in the clone (e.g. never exported); nothing to move.
+			return nil
+		}
+		return err
+	}
+	if st.IsDir() {
+		return fmt.Errorf("expected file at %q, got directory", inventoryRel)
+	}
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		return fmt.Errorf("mkdir archive for %q: %w", destRel, err)
+	}
+	_ = os.Remove(dest)
+	if err := os.Rename(src, dest); err != nil {
+		return fmt.Errorf("rename %q -> %q: %w", src, dest, err)
+	}
+	return nil
 }
