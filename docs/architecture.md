@@ -253,6 +253,16 @@ sequenceDiagram
 - **Upgrader Job 트리거:** `mirror-upgrader` 컨트롤러는 승인(Approved) 상태를 감지하면, 실제 작업을 수행할 일회성 Job 리소스를 생성한다. 이때 `TARGET_VERSION`, `TARGET_NAMESPACE`, 결과 보고를 위한 `CR_NAME` 등을 **환경 변수(ENV)**로 주입한다.
 - **Log Collector 트리거:** 업그레이드가 성공(`Succeeded`)하거나 실패(`Failed`)하여 상태가 전환된 직후, 컨트롤러는 대상 네임스페이스와 업그레이드 작업의 **시작/종료 시점(Timestamp)**을 파라미터로 전달하여 해당 구간의 로그만 수집하도록 지시한다.
 
+### 7.4 리소스 삭제 및 Archive 정책 (Soft-Delete)
+클러스터에서 감시 중인 리소스가 삭제되었을 때, 이를 Git에서 완전히 삭제(Hard-Delete)하지 않고 추적 가능성을 위해 아카이브 처리한다.
+단, 추후 관리자가 삭제된 리소스를 복구하고 다시 Git에 등록하면 **자동 동기화(Auto-Sync)를 통해 클러스터에도 해당 리소스가 복원**된다.
+1. **이벤트 구독 및 삭제 감지:** `inventory-controller`는 K8s Informer를 통해 리소스를 실시간으로 감시(Watch)한다. 리소스가 삭제되어 Reconcile 루프에서 리소스 조회 시 `apierrors.IsNotFound`가 반환되면 이를 삭제(Delete) 상태로 확정한다.
+2. **Git 리소스 제거 및 아카이브(Archive):** 
+   - `inventory-controller`는 1차적으로 해당 리소스의 YAML 파일을 Git에서 제거한다. (Delete 처리)
+   - 이후, `git mv` 명령어를 사용하여 동일한 하위 경로를 가진 `inventory/archive/` 디렉토리로 이동시킨다. 이 과정은 `git-cli` 라이브러리를 통해 프로그램적으로 제어된다.
+   - 예: `inventory/applications/default/test-app.yaml` ➔ `inventory/archive/applications/default/test-app.yaml`
+3. **목적:** 관리자의 실수로 인한 K8s 리소스 삭제를 방지하고, Git 히스토리를 통해 손쉽게 복구(Rollback)할 수 있는 환경을 제공한다.
+
 ---
 
 ## 8. Git 저장소 구조 및 브랜치 전략
