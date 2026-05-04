@@ -51,3 +51,41 @@ func TestLoadInventoryControllerConfig_batchInterval_invalid(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+func TestLoadSyncOperatorConfig_table(t *testing.T) {
+	cases := []struct {
+		name         string
+		secret       string
+		token        string
+		wantErr      bool
+		wantSecret   string
+		wantHasToken bool
+	}{
+		{name: "secret set, token set", secret: "shh", token: "ghp_x", wantSecret: "shh", wantHasToken: true},
+		{name: "secret set, token empty", secret: "shh", token: "", wantSecret: "shh", wantHasToken: false},
+		{name: "secret unset rejected", secret: "", token: "ghp_x", wantErr: true},
+		{name: "secret whitespace rejected", secret: "   ", token: "", wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(envWebhookSecret, tc.secret)
+			t.Setenv(envGitAccessToken, tc.token)
+			c, err := LoadSyncOperatorConfig()
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got config=%+v", c)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if c.WebhookSecret != tc.wantSecret {
+				t.Errorf("WebhookSecret: got %q, want %q", c.WebhookSecret, tc.wantSecret)
+			}
+			if (c.GitAccessToken != "") != tc.wantHasToken {
+				t.Errorf("GitAccessToken presence: got %t, want %t", c.GitAccessToken != "", tc.wantHasToken)
+			}
+		})
+	}
+}

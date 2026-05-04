@@ -36,9 +36,9 @@ import (
 var setupLog = ctrl.Log.WithName("setup")
 
 func main() {
-	cfg, err := config.LoadInventoryControllerConfig()
+	cfg, err := config.LoadSyncOperatorConfig()
 	if err != nil {
-		setupLog.Error(err, "Failed to load configuration (shared env schema for Git token)")
+		setupLog.Error(err, "Failed to load sync-operator configuration")
 		os.Exit(1)
 	}
 
@@ -94,9 +94,10 @@ func main() {
 
 	httpClient := &http.Client{Timeout: 2 * time.Minute}
 	h := &sync.WebhookHandler{
-		K8s:         mgr.GetClient(),
-		HTTPClient:  httpClient,
-		GitHubToken: cfg.GitAccessToken,
+		K8s:           mgr.GetClient(),
+		HTTPClient:    httpClient,
+		GitHubToken:   cfg.GitAccessToken,
+		WebhookSecret: cfg.WebhookSecret,
 	}
 	mgr.GetWebhookServer().Register(sync.WebhookPath, h)
 	setupLog.Info("Registered sync-operator webhook", "path", sync.WebhookPath)

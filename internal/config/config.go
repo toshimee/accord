@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -30,6 +31,7 @@ const (
 	envExportPathTemplate   = "EXPORT_PATH_TEMPLATE"
 	envGitUsername          = "GIT_USERNAME"
 	envGitAccessToken       = "GIT_ACCESS_TOKEN"
+	envWebhookSecret        = "WEBHOOK_SECRET"
 
 	defaultGitBranch          = "main"
 	defaultBatchIntervalSec   = 10
@@ -72,6 +74,30 @@ func LoadInventoryControllerConfig() (InventoryControllerConfig, error) {
 		c.ExportPathTemplate = defaultExportPathTemplate
 	}
 	c.GitUsername = os.Getenv(envGitUsername)
+	c.GitAccessToken = os.Getenv(envGitAccessToken)
+	return c, nil
+}
+
+// SyncOperatorConfig holds non-flag settings for sync-operator (12-factor env).
+// WebhookSecret authenticates inbound Git provider push events; GitAccessToken
+// is only required when fetching raw file contents from a private repository.
+// Never log either field or embed them in error strings (per docs/configuration-strategy.md §2.2).
+type SyncOperatorConfig struct {
+	WebhookSecret  string
+	GitAccessToken string
+}
+
+// LoadSyncOperatorConfig reads environment variables for sync-operator.
+//
+// Per ADR-0013 the loader is fail-closed: an unset (or whitespace-only)
+// WEBHOOK_SECRET makes startup abort so an unauthenticated webhook
+// endpoint can never reach Server-Side Apply.
+func LoadSyncOperatorConfig() (SyncOperatorConfig, error) {
+	var c SyncOperatorConfig
+	c.WebhookSecret = os.Getenv(envWebhookSecret)
+	if strings.TrimSpace(c.WebhookSecret) == "" {
+		return SyncOperatorConfig{}, fmt.Errorf("%s must be set; refusing to start without webhook authentication", envWebhookSecret)
+	}
 	c.GitAccessToken = os.Getenv(envGitAccessToken)
 	return c, nil
 }

@@ -33,10 +33,14 @@ import (
 )
 
 // WebhookHandler handles GitHub-style push webhooks (docs/phase1-sync.md).
+//
+// WebhookSecret is required (ADR-0013): the handler refuses to process any
+// payload that does not carry a valid X-Hub-Signature-256 HMAC signature.
 type WebhookHandler struct {
-	K8s         client.Client
-	HTTPClient  *http.Client
-	GitHubToken string
+	K8s           client.Client
+	HTTPClient    *http.Client
+	GitHubToken   string
+	WebhookSecret string
 }
 
 type webhookResult struct {
@@ -60,6 +64,12 @@ func (h *WebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(io.LimitReader(r.Body, 32<<20))
 	if err != nil {
 		http.Error(w, "failed to read body", http.StatusBadRequest)
+		return
+	}
+
+	if err := VerifyHMACSignature(h.WebhookSecret, r.Header.Get(SignatureHeader), body); err != nil {
+		log.Error(err, "Rejected webhook payload (HMAC verification failed)")
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
