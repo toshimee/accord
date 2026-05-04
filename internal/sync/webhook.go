@@ -22,7 +22,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -107,22 +106,15 @@ func (h *WebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for _, p := range removedPaths {
-		if !strings.HasPrefix(p, "inventory/") || strings.HasPrefix(p, "inventory/archive/") {
+		parsed, ok := ParseInventoryExportPath(p)
+		if !ok {
+			results = append(results, webhookResult{Path: p, Status: "ignored", Detail: "path not under inventory/applications|applicationsets"})
 			continue
 		}
-
-		parts := strings.Split(strings.TrimPrefix(p, "inventory/"), "/")
-		if len(parts) != 3 {
+		k8sKind, err := ArgoKindFromPlural(parsed.PluralKind)
+		if err != nil {
+			results = append(results, webhookResult{Path: p, Status: "ignored", Detail: err.Error()})
 			continue
-		}
-
-		kindPlural := parts[0]
-		namespace := parts[1]
-		name := strings.TrimSuffix(parts[2], ".yaml")
-
-		k8sKind := "Application"
-		if kindPlural == "applicationsets" {
-			k8sKind = "ApplicationSet"
 		}
 
 		obj := &unstructured.Unstructured{}
@@ -131,15 +123,17 @@ func (h *WebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			Version: "v1alpha1",
 			Kind:    k8sKind,
 		})
-		obj.SetNamespace(namespace)
-		obj.SetName(name)
+		obj.SetNamespace(parsed.Namespace)
+		obj.SetName(parsed.Name)
 
 		if err := h.K8s.Delete(ctx, obj); err != nil {
-			if !apierrors.IsNotFound(err) {
-				log.Error(err, "failed to delete resource via Git deletion")
-				results = append(results, webhookResult{Path: p, Status: "error", Detail: fmt.Sprintf("delete failed: %v", err)})
+			if apierrors.IsNotFound(err) {
+				results = append(results, webhookResult{Path: p, Status: "deleted", Detail: "already gone"})
 				continue
 			}
+			log.Error(err, "Failed to delete resource via Git deletion", "path", p)
+			results = append(results, webhookResult{Path: p, Status: "error", Detail: fmt.Sprintf("delete failed: %v", err)})
+			continue
 		}
 		results = append(results, webhookResult{Path: p, Status: "deleted"})
 	}
