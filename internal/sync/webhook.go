@@ -19,10 +19,15 @@ package sync
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 )
@@ -58,7 +63,7 @@ func (h *WebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fullName, sha, paths, err := ParseGitHubPushPaths(body)
+	fullName, sha, addedPaths, removedPaths, err := ParseGitHubPushPaths(body)
 	if err != nil {
 		log.Info("Rejected webhook payload", "reason", err.Error())
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -74,7 +79,7 @@ func (h *WebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var results []webhookResult
-	for _, p := range paths {
+	for _, p := range addedPaths {
 		if _, ok := ParseInventoryExportPath(p); !ok {
 			results = append(results, webhookResult{Path: p, Status: "ignored", Detail: "path not under inventory/applications|applicationsets"})
 			continue
@@ -89,6 +94,44 @@ func (h *WebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		results = append(results, webhookResult{Path: p, Status: "applied"})
+	}
+
+	for _, p := range removedPaths {
+		if !strings.HasPrefix(p, "inventory/") || strings.HasPrefix(p, "inventory/archive/") {
+			continue
+		}
+
+		parts := strings.Split(strings.TrimPrefix(p, "inventory/"), "/")
+		if len(parts) != 3 {
+			continue
+		}
+
+		kindPlural := parts[0]
+		namespace := parts[1]
+		name := strings.TrimSuffix(parts[2], ".yaml")
+
+		k8sKind := "Application"
+		if kindPlural == "applicationsets" {
+			k8sKind = "ApplicationSet"
+		}
+
+		obj := &unstructured.Unstructured{}
+		obj.SetGroupVersionKind(schema.GroupVersionKind{
+			Group:   "argoproj.io",
+			Version: "v1alpha1",
+			Kind:    k8sKind,
+		})
+		obj.SetNamespace(namespace)
+		obj.SetName(name)
+
+		if err := h.K8s.Delete(ctx, obj); err != nil {
+			if !apierrors.IsNotFound(err) {
+				log.Error(err, "failed to delete resource via Git deletion")
+				results = append(results, webhookResult{Path: p, Status: "error", Detail: fmt.Sprintf("delete failed: %v", err)})
+				continue
+			}
+		}
+		results = append(results, webhookResult{Path: p, Status: "deleted"})
 	}
 
 	w.Header().Set("Content-Type", "application/json")

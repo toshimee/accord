@@ -36,17 +36,18 @@ type githubPushEvent struct {
 	Commits []struct {
 		Added    []string `json:"added"`
 		Modified []string `json:"modified"`
+		Removed  []string `json:"removed"`
 	} `json:"commits"`
 }
 
-// ParseGitHubPushPaths returns unique file paths from commits[].added and commits[].modified.
-func ParseGitHubPushPaths(body []byte) (fullName, headSHA string, paths []string, err error) {
+// ParseGitHubPushPaths returns unique file paths from commits[].added/modified and commits[].removed.
+func ParseGitHubPushPaths(body []byte) (fullName, headSHA string, addedModified []string, removed []string, err error) {
 	var ev githubPushEvent
 	if err := json.Unmarshal(body, &ev); err != nil {
-		return "", "", nil, fmt.Errorf("decode GitHub push JSON: %w", err)
+		return "", "", nil, nil, fmt.Errorf("decode GitHub push JSON: %w", err)
 	}
 	if ev.Repository.FullName == "" {
-		return "", "", nil, fmt.Errorf("missing repository.full_name")
+		return "", "", nil, nil, fmt.Errorf("missing repository.full_name")
 	}
 	sha := ""
 	if ev.HeadCommit != nil {
@@ -56,25 +57,44 @@ func ParseGitHubPushPaths(body []byte) (fullName, headSHA string, paths []string
 		sha = ev.After
 	}
 	if sha == "" || sha == "0000000000000000000000000000000000000000" {
-		return "", "", nil, fmt.Errorf("missing commit SHA (head_commit.id or after)")
+		return "", "", nil, nil, fmt.Errorf("missing commit SHA (head_commit.id or after)")
 	}
-	seen := make(map[string]struct{})
+	seenAdded := make(map[string]struct{})
+	seenRemoved := make(map[string]struct{})
 	for _, c := range ev.Commits {
 		for _, p := range c.Added {
 			if p != "" {
-				seen[p] = struct{}{}
+				seenAdded[p] = struct{}{}
 			}
 		}
 		for _, p := range c.Modified {
 			if p != "" {
-				seen[p] = struct{}{}
+				seenAdded[p] = struct{}{}
+			}
+		}
+		for _, p := range c.Removed {
+			if p != "" {
+				seenRemoved[p] = struct{}{}
 			}
 		}
 	}
-	out := make([]string, 0, len(seen))
-	for p := range seen {
-		out = append(out, p)
+	
+	// added와 removed에 동시 존재하면 added로 간주
+	for p := range seenAdded {
+		delete(seenRemoved, p)
 	}
-	sort.Strings(out)
-	return ev.Repository.FullName, sha, out, nil
+
+	outAdded := make([]string, 0, len(seenAdded))
+	for p := range seenAdded {
+		outAdded = append(outAdded, p)
+	}
+	sort.Strings(outAdded)
+
+	outRemoved := make([]string, 0, len(seenRemoved))
+	for p := range seenRemoved {
+		outRemoved = append(outRemoved, p)
+	}
+	sort.Strings(outRemoved)
+
+	return ev.Repository.FullName, sha, outAdded, outRemoved, nil
 }
