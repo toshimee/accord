@@ -89,7 +89,8 @@ func (h *WebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	var results []webhookResult
 	for _, p := range addedPaths {
-		if _, ok := ParseInventoryExportPath(p); !ok {
+		parsed, ok := ParseInventoryExportPath(p)
+		if !ok {
 			results = append(results, webhookResult{Path: p, Status: "ignored", Detail: "path not under inventory/applications|applicationsets"})
 			continue
 		}
@@ -98,7 +99,7 @@ func (h *WebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			results = append(results, webhookResult{Path: p, Status: "error", Detail: err.Error()})
 			continue
 		}
-		if err := ApplyInventoryYAML(ctx, h.K8s, raw); err != nil {
+		if err := ApplyInventoryYAML(ctx, h.K8s, parsed, raw); err != nil {
 			results = append(results, webhookResult{Path: p, Status: "error", Detail: err.Error()})
 			continue
 		}
