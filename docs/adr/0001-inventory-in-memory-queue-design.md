@@ -15,6 +15,29 @@ Redis나 RabbitMQ와 같은 외부 메시지 브로커를 사용하지 않고, *
 - 컨트롤러 내부에 배치 워커(Goroutine) 로직이 추가되어야 한다.
 - Pod 재시작 직후에는 전체 리소스를 다시 확인하는 과정에서 일시적인 CPU/네트워크 트래픽이 발생할 수 있으나, 쿠버네티스 표준 동작 범위 내이다.
 
+## 5. 구현
+
+### 5.1. 큐 위임 인터페이스 구조
+```go
+// internal/inventory/reconciler.go
+type ReconcileDeps struct {
+	Client         client.Client
+	Cache          *HashCache
+	GitQueue       *git.BatchWorker // 비동기 배치 워커 (인메모리 큐 역할)
+	ExportPathTmpl string
+}
+
+func (d *ReconcileDeps) handle(ctx context.Context, req ctrl.Request, obj client.Object, kind string) (ctrl.Result, error) {
+    // (중략) 메타데이터 정규화 및 해시 비교 검증 로직...
+
+    relPath, err := RenderExportPath(d.ExportPathTmpl, kind, req.Namespace, req.Name)
+
+    // Git 연산을 직접 수행하지 않고 Queue에 Enqueue
+	d.GitQueue.Enqueue(git.ExportJob{Path: relPath, Content: yamlBytes})
+	return ctrl.Result{}, nil
+}
+```
+
 
 ##naive한 gemini 대화 내용
 
